@@ -267,7 +267,7 @@ public class ServerScannerScreen extends Screen {
             CompletableFuture.runAsync(() -> {
                 if (isPortOpen(ipStr)) {
                     ServerInfo s = new ServerInfo(
-                            "Server #" + host,
+                            "Server #" + ipStr,
                             ipStr + ":" + DEFAULT_MINECRAFT_PORT,
                             ServerInfo.ServerType.LAN);
                     foundServers.add(s);
@@ -278,6 +278,8 @@ public class ServerScannerScreen extends Screen {
                 updateProgress(p, totalHosts);
             }, executorService);
         }
+        stopScanning();
+        completeScan();
     }
 
     private boolean isPortOpen(String ip) {

@@ -100,7 +100,7 @@ public class ServerScannerScreen extends Screen {
     }
 
     private void saveCurrentState() {
-        if (ipTextField != null) {
+        if (this.ipTextField != null) {
             savedIpText   = ipTextField.getText();
             savedSubnetText = subnetTextField.getText();
         }
@@ -112,42 +112,42 @@ public class ServerScannerScreen extends Screen {
         int comboWidth = IP_FIELD_WIDTH + FIELD_GAP + SUBNET_FIELD_WIDTH;
         int startX = centerX - comboWidth / 2;
 
-        ipTextField = new TextFieldWidget(textRenderer, startX, y,
+        this.ipTextField = new TextFieldWidget(textRenderer, startX, y,
                 IP_FIELD_WIDTH, BUTTON_HEIGHT, Text.literal("IP Address"));
-        ipTextField.setMaxLength(15);
-        ipTextField.setTooltip(Tooltip.of(Text.literal("Enter IP address (e.g. 192.168.1.1)")));
+        this.ipTextField.setMaxLength(15);
+        this.ipTextField.setTooltip(Tooltip.of(Text.literal("Enter IP address (e.g. 192.168.1.1)")));
 
-        subnetTextField = new TextFieldWidget(textRenderer,
+        this.subnetTextField = new TextFieldWidget(textRenderer,
                 startX + IP_FIELD_WIDTH + FIELD_GAP, y,
                 SUBNET_FIELD_WIDTH, BUTTON_HEIGHT, Text.literal("/"));
-        subnetTextField.setMaxLength(2);
-        subnetTextField.setTooltip(Tooltip.of(Text.literal("CIDR prefix")));
-        subnetTextField.setText(String.valueOf(DEFAULT_SUBNET_PREFIX));
+        this.subnetTextField.setMaxLength(2);
+        this.subnetTextField.setTooltip(Tooltip.of(Text.literal("CIDR prefix")));
+        this.subnetTextField.setText(String.valueOf(DEFAULT_SUBNET_PREFIX));
 
-        addDrawableChild(ipTextField);
-        addDrawableChild(subnetTextField);
+        this.addDrawableChild(ipTextField);
+        this.addDrawableChild(subnetTextField);
     }
 
     private void initializeButtons() {
-        scanButton = ButtonWidget.builder(Text.literal("Scan Network"), this::handleScanButton)
+        this.scanButton = ButtonWidget.builder(Text.literal("Scan Network"), this::handleScanButton)
                 .width(200)
                 .position(this.width / 2 - 100, 50)
                 .build();
 
         ButtonWidget backButton = ButtonWidget.builder(Text.literal("Back"),
-                b -> MinecraftClient.getInstance().setScreen(parent))
+                button -> MinecraftClient.getInstance().setScreen(parent))
                 .width(50)
                 .position(5, 5)
                 .build();
 
-        addDrawableChild(scanButton);
-        addDrawableChild(backButton);
+        this.addDrawableChild(scanButton);
+        this.addDrawableChild(backButton);
     }
 
     private void restoreState() {
         statusText = Text.literal("");
-        ipTextField.setText(savedIpText.isEmpty()   ? "192.168.1.1" : savedIpText);
-        subnetTextField.setText(savedSubnetText.isEmpty()
+        this.ipTextField.setText(savedIpText.isEmpty()   ? "192.168.1.1" : savedIpText);
+        this.subnetTextField.setText(savedSubnetText.isEmpty()
                 ? String.valueOf(DEFAULT_SUBNET_PREFIX) : savedSubnetText);
     }
 
@@ -335,8 +335,8 @@ public class ServerScannerScreen extends Screen {
                     .width(dynamicButtonWidth)
                     .position(buttonX, buttonY)
                     .build();
-            serverButtons.add(btn);
-            addDrawableChild(btn);
+            this.serverButtons.add(btn);
+            this.addDrawableChild(btn);
             idx++;
         }
     }
@@ -385,15 +385,15 @@ public class ServerScannerScreen extends Screen {
 
     @Override
     public void render(DrawContext ctx, int mx, int my, float delta) {
-        renderBackground(ctx, mx, my, delta);
+        this.renderBackground(ctx, mx, my, delta);
         super.render(ctx, mx, my, delta);
 
-        ctx.drawTextWithShadow(textRenderer, title,
-                width / 2 - textRenderer.getWidth(title) / 2, 5, 0xFFFFFF);
+        ctx.drawTextWithShadow(this.textRenderer, title,
+                this.width / 2 - this.textRenderer.getWidth(title) / 2, 5, 0xFFFFFF);
 
         if (statusText != null) {
-            ctx.drawTextWithShadow(textRenderer, statusText,
-                    width / 2 - textRenderer.getWidth(statusText) / 2, 80, 0xFFFFFF);
+            ctx.drawTextWithShadow(this.textRenderer, statusText,
+                    this.width / 2 - this.textRenderer.getWidth(statusText) / 2, 80, 0xFFFFFF);
         }
     }
 
@@ -413,11 +413,11 @@ public class ServerScannerScreen extends Screen {
 
     @Override
     public void resize(MinecraftClient client, int width, int height) {
-        String ip  = ipTextField   != null ? ipTextField.getText()   : "";
-        String sub = subnetTextField != null ? subnetTextField.getText() : "";
+        String ip  = this.ipTextField   != null ? this.ipTextField.getText()   : "";
+        String sub = this.subnetTextField != null ? this.subnetTextField.getText() : "";
         init(client, width, height);
-        ipTextField.setText(ip);
-        subnetTextField.setText(sub);
+        this.ipTextField.setText(ip);
+        this.subnetTextField.setText(sub);
         updateServerList();
     }
 }

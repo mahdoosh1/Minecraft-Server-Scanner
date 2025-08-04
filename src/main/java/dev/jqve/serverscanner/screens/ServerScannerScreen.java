@@ -101,8 +101,8 @@ public class ServerScannerScreen extends Screen {
 
     private void saveCurrentState() {
         if (this.ipTextField != null) {
-            savedIpText   = ipTextField.getText();
-            savedSubnetText = subnetTextField.getText();
+            this.savedIpText   = this.ipTextField.getText();
+            this.savedSubnetText = this.subnetTextField.getText();
         }
     }
 
@@ -146,9 +146,9 @@ public class ServerScannerScreen extends Screen {
 
     private void restoreState() {
         statusText = Text.literal("");
-        this.ipTextField.setText(savedIpText.isEmpty()   ? "192.168.1.1" : savedIpText);
-        this.subnetTextField.setText(savedSubnetText.isEmpty()
-                ? String.valueOf(DEFAULT_SUBNET_PREFIX) : savedSubnetText);
+        this.ipTextField.setText(this.savedIpText.isEmpty()   ? "192.168.1.1" : this.savedIpText);
+        this.subnetTextField.setText(this.savedSubnetText.isEmpty()
+                ? String.valueOf(DEFAULT_SUBNET_PREFIX) : this.savedSubnetText);
     }
 
     private void startUiUpdateThread() {
@@ -158,9 +158,11 @@ public class ServerScannerScreen extends Screen {
             return t;
         });
         uiUpdateExecutor.scheduleAtFixedRate(() -> {
-            Runnable r;
-            while ((r = uiUpdateQueue.poll()) != null) {
-                MinecraftClient.getInstance().execute(r);
+            while (!uiUpdateQueue.isEmpty()) {
+                Runnable update = uiUpdateQueue.poll();
+                if (update != null) {
+                    MinecraftClient.getInstance().execute(update);
+                }
             }
         }, 0, 50, TimeUnit.MILLISECONDS);
     }
@@ -194,8 +196,11 @@ public class ServerScannerScreen extends Screen {
             updateServerList();
         });
 
-        executorService = Executors.newFixedThreadPool(
-                THREAD_POOL_SIZE, r -> new Thread(r, "Server-Scanner-Thread"));
+        executorService = Executors.newFixedThreadPool(THREAD_POOL_SIZE, r -> {
+            Thread thread = new Thread(r, "Server-Scanner-Thread");
+            thread.setDaemon(true);
+            return thread;
+        });
 
         scanNetwork(ip);
     }
@@ -206,6 +211,7 @@ public class ServerScannerScreen extends Screen {
             executorService = null;
         }
         isScanning = false;
+
         queueUiUpdate(() -> {
             scanButton.setMessage(Text.literal("Scan Network"));
             statusText = Text.literal("§cScanning stopped");
@@ -299,21 +305,15 @@ public class ServerScannerScreen extends Screen {
     }
 
     private void clearServerButtons() {
-        serverButtons.forEach(this::remove);
+        for (ButtonWidget button : serverButtons) {
+            this.remove(button);
+        }
         serverButtons.clear();
     }
 
     /* ================================================================ */
     /* ========================   UI UTILS   ========================== */
     /* ================================================================ */
-
-    private void queueUiUpdate(Runnable r) {
-        uiUpdateQueue.offer(r);
-    }
-
-    private void setStatusText(String msg) {
-        queueUiUpdate(() -> statusText = Text.literal(msg));
-    }
 
     private void updateServerList() {
         clearServerButtons();
@@ -359,11 +359,18 @@ public class ServerScannerScreen extends Screen {
         updateServerList();
     }
 
+    private void queueUiUpdate(Runnable update) {
+        uiUpdateQueue.offer(update);
+    }
+
+    private void setStatusText(String message) {
+        queueUiUpdate(() -> statusText = Text.literal(message));
+    }
+
     /* ================================================================ */
     /* =====================   SCROLL HANDLING   ====================== */
     /* ================================================================ */
 
-    @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
         int maxRowsVisible = MAX_VISIBLE_ROWS;
         if (totalRows > maxRowsVisible) {

@@ -22,57 +22,64 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 /**
- * An updated ServerScannerScreen that includes scrolling if the buttons exceed
- * the visible rows (in this case, two). Scrolling is handled via mouse wheel.
+ * ServerScannerScreen with scrollable server list
+ * and user-configurable CIDR subnet prefix (default 24).
  */
 public class ServerScannerScreen extends Screen {
     private static final Logger LOGGER = LogManager.getLogger(ServerScannerScreen.class);
 
-    // Configuration constants
-    private static final int TIMEOUT_MS = 200;
-    private static final int THREAD_POOL_SIZE = 50;
-    private static final int DEFAULT_MINECRAFT_PORT = 25565;
-    private static final int SCAN_RANGE_START = 1;
-    private static final int SCAN_RANGE_END = 254;
+    /* ---------- CONFIG ---------- */
+    private static final int    TIMEOUT_MS         = 200;
+    private static final int    THREAD_POOL_SIZE   = 50;
+    private static final int    DEFAULT_MINECRAFT_PORT = 25565;
+    private static final int    DEFAULT_SUBNET_PREFIX  = 24;
 
-    // UI constants
-    private static final int BUTTON_HEIGHT = 20;
-    private static final int BUTTON_SPACING = 4;
+    /* ---------- UI CONSTANTS ---------- */
+    private static final int BUTTON_HEIGHT   = 20;
+    private static final int BUTTON_SPACING  = 4;
     private static final int RESULTS_START_Y = 120;
-    private static final int TEXT_FIELD_WIDTH = 200;
-    private static final Pattern IP_PATTERN = Pattern.compile(
-            "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
-    );
 
+    private static final int IP_FIELD_WIDTH     = 150;
+    private static final int SUBNET_FIELD_WIDTH = 45;
+    private static final int FIELD_GAP          = 5;
+
+    private static final Pattern IP_PATTERN = Pattern.compile(
+            "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$");
+
+    /* ---------- FIELDS ---------- */
     private final Screen parent;
     private final Set<ServerInfo> foundServers = Collections.synchronizedSet(new LinkedHashSet<>());
     private final Queue<Runnable> uiUpdateQueue = new ConcurrentLinkedQueue<>();
     private final List<ButtonWidget> serverButtons = new ArrayList<>();
 
     private TextFieldWidget ipTextField;
+    private TextFieldWidget subnetTextField;
     private ButtonWidget scanButton;
     private Text statusText;
     private ExecutorService executorService;
     private ScheduledExecutorService uiUpdateExecutor;
     private volatile boolean isScanning;
-    private String savedIpText = "";
 
-    // Layout-related fields
+    /* ---------- STATE PERSISTENCE ---------- */
+    private String savedIpText   = "";
+    private String savedSubnetText = "";
+
+    /* ---------- LAYOUT HELPERS ---------- */
     private int buttonsPerRow;
     private int dynamicButtonWidth;
-
-    // We'll cap the visible rows at 2 for demonstration, then let the rest scroll.
     private static final int MAX_VISIBLE_ROWS = 2;
-
-    // We'll store the total row count, plus a scroll offset to allow viewing off-screen buttons.
     private int totalRows;
     private int scrollOffset = 0;
-    private final int scrollSpeed = 10; // Adjust scroll speed as needed
+    private final int scrollSpeed = 10;
 
     public ServerScannerScreen(Screen parent) {
         super(Text.literal("Minecraft Server Scanner"));
         this.parent = parent;
     }
+
+    /* ================================================================ */
+    /* =====================   INIT / LIFECYCLE   ===================== */
+    /* ================================================================ */
 
     @Override
     protected void init() {
@@ -84,79 +91,41 @@ public class ServerScannerScreen extends Screen {
         startUiUpdateThread();
     }
 
-    /**
-     * Dynamically calculates how many buttons fit in one row and the button width,
-     * but caps the visible rows to MAX_VISIBLE_ROWS. If more servers occupy more rows,
-     * we'll allow scrolling to see them.
-     */
     private void calculateLayoutMetrics() {
-        int totalWidth = this.width - 40; // 20px padding on each side
-        if (totalWidth < 1) totalWidth = 1;
-        // Estimate how many buttons can fit using around 180px each + spacing
-        int approximateButtonWidth = 180;
-        buttonsPerRow = Math.max(1, totalWidth / (approximateButtonWidth + BUTTON_SPACING));
-
-        // Now compute how many total "slots" we have per row for that arrangement
+        int totalWidth = Math.max(1, this.width - 40);
+        int approxButtonWidth = 180;
+        buttonsPerRow = Math.max(1, totalWidth / (approxButtonWidth + BUTTON_SPACING));
         int spaceForButtons = totalWidth - (BUTTON_SPACING * (buttonsPerRow - 1));
         dynamicButtonWidth = Math.max(50, spaceForButtons / buttonsPerRow);
     }
 
     private void saveCurrentState() {
         if (this.ipTextField != null) {
-            savedIpText = this.ipTextField.getText();
+            this.savedIpText   = this.ipTextField.getText();
+            this.savedSubnetText = this.subnetTextField.getText();
         }
     }
 
     private void initializeTextFields() {
-        this.ipTextField = new TextFieldWidget(
-                this.textRenderer,
-                this.width / 2 - TEXT_FIELD_WIDTH / 2,
-                20,
-                TEXT_FIELD_WIDTH,
-                BUTTON_HEIGHT,
-                Text.literal("IP Address")
-        );
+        int y = 20;
+        int centerX = this.width / 2;
+        int comboWidth = IP_FIELD_WIDTH + FIELD_GAP + SUBNET_FIELD_WIDTH;
+        int startX = centerX - comboWidth / 2;
+
+        this.ipTextField = new TextFieldWidget(textRenderer, startX, y,
+                IP_FIELD_WIDTH, BUTTON_HEIGHT, Text.literal("IP Address"));
         this.ipTextField.setMaxLength(15);
-        this.ipTextField.setTooltip(Tooltip.of(Text.literal("Enter IP address (e.g., 192.168.1.1)")));
+        this.ipTextField.setTooltip(Tooltip.of(Text.literal("Enter IP address (e.g. 192.168.1.1)")));
+
+        this.subnetTextField = new TextFieldWidget(textRenderer,
+                startX + IP_FIELD_WIDTH + FIELD_GAP, y,
+                SUBNET_FIELD_WIDTH, BUTTON_HEIGHT, Text.literal("/"));
+        this.subnetTextField.setMaxLength(2);
+        this.subnetTextField.setTooltip(Tooltip.of(Text.literal("CIDR prefix")));
+        this.subnetTextField.setText(String.valueOf(DEFAULT_SUBNET_PREFIX));
+
         this.addDrawableChild(ipTextField);
-    }
-
-    private String getNetworkAddress(String ip) {
-        try {
-            InetAddress addr = InetAddress.getByName(ip);
-            NetworkInterface networkInterface = NetworkInterface.getByInetAddress(addr);
-
-            if (networkInterface != null) {
-                for (InterfaceAddress interfaceAddress : networkInterface.getInterfaceAddresses()) {
-                    if (interfaceAddress.getAddress() instanceof Inet4Address) {
-                        int prefix = interfaceAddress.getNetworkPrefixLength();
-                        byte[] bytes = addr.getAddress();
-                        int mask = 0xffffffff << (32 - prefix);
-
-                        int network = ((bytes[0] & 0xff) << 24) |
-                                ((bytes[1] & 0xff) << 16) |
-                                ((bytes[2] & 0xff) << 8) |
-                                (bytes[3] & 0xff);
-                        network &= mask;
-                        return String.format("%d.%d.%d.",
-                                (network >>> 24) & 0xff,
-                                (network >>> 16) & 0xff,
-                                (network >>> 8) & 0xff);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            LOGGER.error("Error determining network address", e);
-        }
-        // Fallback: remove last octet
-        return ip.substring(0, ip.lastIndexOf('.') + 1);
-    }
-
-    private void clearServerButtons() {
-        for (ButtonWidget button : serverButtons) {
-            this.remove(button);
-        }
-        serverButtons.clear();
+        this.addDrawableChild(subnetTextField);
     }
 
     private void initializeButtons() {
@@ -165,8 +134,8 @@ public class ServerScannerScreen extends Screen {
                 .position(this.width / 2 - 100, 50)
                 .build();
 
-        ButtonWidget backButton = ButtonWidget.builder(Text.literal("Back"), button ->
-                        MinecraftClient.getInstance().setScreen(parent))
+        ButtonWidget backButton = ButtonWidget.builder(Text.literal("Back"),
+                button -> MinecraftClient.getInstance().setScreen(parent))
                 .width(50)
                 .position(5, 5)
                 .build();
@@ -177,16 +146,17 @@ public class ServerScannerScreen extends Screen {
 
     private void restoreState() {
         statusText = Text.literal("");
-        this.ipTextField.setText(savedIpText.isEmpty() ? "192.168.1.1" : savedIpText);
+        this.ipTextField.setText(this.savedIpText.isEmpty()   ? "192.168.1.1" : this.savedIpText);
+        this.subnetTextField.setText(this.savedSubnetText.isEmpty()
+                ? String.valueOf(DEFAULT_SUBNET_PREFIX) : this.savedSubnetText);
     }
 
     private void startUiUpdateThread() {
         uiUpdateExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread thread = new Thread(r, "UI-Update-Thread");
-            thread.setDaemon(true);
-            return thread;
+            Thread t = new Thread(r, "UI-Update-Thread");
+            t.setDaemon(true);
+            return t;
         });
-
         uiUpdateExecutor.scheduleAtFixedRate(() -> {
             while (!uiUpdateQueue.isEmpty()) {
                 Runnable update = uiUpdateQueue.poll();
@@ -197,21 +167,26 @@ public class ServerScannerScreen extends Screen {
         }, 0, 50, TimeUnit.MILLISECONDS);
     }
 
-    private void handleScanButton(ButtonWidget button) {
-        if (isScanning) {
-            stopScanning();
-        } else {
-            startScanning();
+    /* ================================================================ */
+    /* ========================   SCAN LOGIC   ======================== */
+    /* ================================================================ */
+
+    private int getSubnetPrefix() {
+        try {
+            return Integer.parseInt(subnetTextField.getText().trim());
+        } catch (NumberFormatException ex) {
+            return DEFAULT_SUBNET_PREFIX;
         }
+    }
+
+    private void handleScanButton(ButtonWidget button) {
+        if (isScanning) stopScanning(); else startScanning();
     }
 
     private void startScanning() {
         String ip = ipTextField.getText().trim();
-        if (!validateInput(ip)) {
-            return;
-        }
+        if (!validateInput(ip)) return;
 
-        String networkIp = getNetworkAddress(ip);
         isScanning = true;
         foundServers.clear();
         clearServerButtons();
@@ -227,7 +202,7 @@ public class ServerScannerScreen extends Screen {
             return thread;
         });
 
-        scanNetwork(networkIp);
+        scanNetwork(ip);
     }
 
     private void stopScanning() {
@@ -251,116 +226,135 @@ public class ServerScannerScreen extends Screen {
         return true;
     }
 
-    private void scanNetwork(String baseIp) {
-        AtomicInteger processedIps = new AtomicInteger(0);
-        int totalIps = SCAN_RANGE_END - SCAN_RANGE_START + 1;
-
-        CompletableFuture<Void> scanTask = CompletableFuture.runAsync(() -> {
-            for (int i = SCAN_RANGE_START; i <= SCAN_RANGE_END && isScanning; i++) {
-                final String ip = baseIp + i;
-                final int currentNumber = i;
-
-                CompletableFuture.runAsync(() -> {
-                    try {
-                        if (isPortOpen(ip)) {
-                            ServerInfo server = new ServerInfo(
-                                    "Server #" + currentNumber,
-                                    ip + ":" + DEFAULT_MINECRAFT_PORT,
-                                    ServerInfo.ServerType.LAN
-                            );
-                            foundServers.add(server);
-                            LOGGER.info("Found server at {}", ip);
-                            queueUiUpdate(this::updateServerList);
-                        }
-                    } finally {
-                        int processed = processedIps.incrementAndGet();
-                        updateProgress(processed, totalIps);
-                    }
-                }, executorService);
-            }
-        }, executorService);
-
-        scanTask.whenComplete((result, exception) -> {
-            if (exception != null) {
-                LOGGER.error("Error during scanning", exception);
-                setStatusText("§cError during scanning");
-            }
+    private void scanNetwork(String literalIp) {
+        final int prefix = Math.max(1, Math.min(30, getSubnetPrefix()));
+        final int hostBits = 32 - prefix;
+        final int totalHosts = (1 << hostBits) - 2;
+        if (totalHosts <= 0) {
+            setStatusText("§cPrefix too large (no usable hosts)");
             completeScan();
-        });
+            return;
+        }
+
+        AtomicInteger processed = new AtomicInteger(0);
+
+        /* numeric network base */
+        int net;
+        try {
+            byte[] b = InetAddress.getByName(literalIp).getAddress();
+            net = ((b[0] & 0xFF) << 24) |
+                  ((b[1] & 0xFF) << 16) |
+                  ((b[2] & 0xFF) << 8)  |
+                   (b[3] & 0xFF);
+        } catch (Exception e) {
+            setStatusText("§cCannot resolve IP");
+            completeScan();
+            return;
+        }
+
+        final int mask = 0xFFFFFFFF << hostBits;
+        final int network = net & mask;
+
+        /* schedule scan tasks */
+        for (int host = 1; host <= totalHosts && isScanning; host++) {
+            final int ipInt = network + host;
+            final String ipStr = String.format("%d.%d.%d.%d",
+                    (ipInt >>> 24) & 0xFF,
+                    (ipInt >>> 16) & 0xFF,
+                    (ipInt >>> 8)  & 0xFF,
+                    ipInt & 0xFF);
+
+            CompletableFuture.runAsync(() -> {
+                if (isPortOpen(ipStr)) {
+                    ServerInfo s = new ServerInfo(
+                            "Server #" + ipStr,
+                            ipStr + ":" + DEFAULT_MINECRAFT_PORT,
+                            ServerInfo.ServerType.LAN);
+                    foundServers.add(s);
+                    LOGGER.info("Found server at {}", ipStr);
+                    queueUiUpdate(this::updateServerList);
+                }
+                int p = processed.incrementAndGet();
+                updateProgress(p, totalHosts);
+            }, executorService);
+        }
+        stopScanning();
+        completeScan();
     }
 
     private boolean isPortOpen(String ip) {
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(ip, DEFAULT_MINECRAFT_PORT), TIMEOUT_MS);
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress(ip, DEFAULT_MINECRAFT_PORT), TIMEOUT_MS);
             return true;
-        } catch (IOException e) {
+        } catch (IOException ignored) {
             return false;
         }
     }
 
     private void updateProgress(int processed, int total) {
-        float progress = (float) processed / total * 100;
-        setStatusText(String.format("§eScanning: %.1f%% (%d/%d)", progress, processed, total));
+        float pct = (float) processed / total * 100;
+        setStatusText(String.format("§eScanning: %.1f%% (%d/%d)", pct, processed, total));
     }
 
     private void completeScan() {
         if (!isScanning) return;
-
         queueUiUpdate(() -> {
             isScanning = false;
             scanButton.setMessage(Text.literal("Scan Network"));
-            statusText = Text.literal("§aScanning completed! Found " + foundServers.size() + " servers");
+            statusText = Text.literal("§aScan complete! Found " + foundServers.size() + " servers");
             updateServerList();
         });
     }
 
-    /**
-     * Updates the server buttons. We calculate the totalRows, then place the buttons.
-     * If the totalRows exceeds MAX_VISIBLE_ROWS, we let the user scroll using the mouse wheel.
-     */
+    private void clearServerButtons() {
+        for (ButtonWidget button : serverButtons) {
+            this.remove(button);
+        }
+        serverButtons.clear();
+    }
+
+    /* ================================================================ */
+    /* ========================   UI UTILS   ========================== */
+    /* ================================================================ */
+
     private void updateServerList() {
         clearServerButtons();
         if (foundServers.isEmpty()) return;
 
-        // Calculate total rows needed for all servers
         int serverCount = foundServers.size();
         totalRows = (int) Math.ceil((double) serverCount / buttonsPerRow);
-
-        // The actual loop to create buttons
         int idx = 0;
-        int buttonYStart = RESULTS_START_Y - scrollOffset; // offset by scroll
+        int yStart = RESULTS_START_Y - scrollOffset;
+
         for (ServerInfo server : foundServers) {
-            // compute row, col
             int row = idx / buttonsPerRow;
             int col = idx % buttonsPerRow;
-            // the Y position is offset by the scrollOffset
-            int buttonY = buttonYStart + row * (BUTTON_HEIGHT + BUTTON_SPACING);
+            int buttonY = yStart + row * (BUTTON_HEIGHT + BUTTON_SPACING);
             int buttonX = 20 + col * (dynamicButtonWidth + BUTTON_SPACING);
 
-            ButtonWidget button = ButtonWidget.builder(Text.literal(server.name), (btn) -> addServerToList(server))
+            ButtonWidget btn = ButtonWidget.builder(Text.literal(server.name),
+                            b -> addServerToList(server))
                     .width(dynamicButtonWidth)
                     .position(buttonX, buttonY)
                     .build();
-
-            this.serverButtons.add(button);
-            this.addDrawableChild(button);
-
+            this.serverButtons.add(btn);
+            this.addDrawableChild(btn);
             idx++;
         }
     }
 
     private void addServerToList(ServerInfo server) {
         MinecraftClient client = MinecraftClient.getInstance();
-        MultiplayerScreen multiplayerScreen = new MultiplayerScreen(this);
-        multiplayerScreen.init(client, this.width, this.height);
+        MultiplayerScreen mp = new MultiplayerScreen(this);
+        mp.init(client, this.width, this.height);
 
-        ServerList serverList = new ServerList(client);
-        serverList.loadFile();
+        ServerList list = new ServerList(client);
+        list.loadFile();
 
-        MultiplayerScreenInvoker invoker = (MultiplayerScreenInvoker) multiplayerScreen;
-        invoker.setServerList(serverList);
-        invoker.setSelectedEntry(server);
-        invoker.invokeAddEntry(true);
+        MultiplayerScreenInvoker inv = (MultiplayerScreenInvoker) mp;
+        inv.setServerList(list);
+        inv.setSelectedEntry(server);
+        inv.invokeAddEntry(true);
 
         client.setScreen(this);
         foundServers.remove(server);
@@ -375,55 +369,46 @@ public class ServerScannerScreen extends Screen {
         queueUiUpdate(() -> statusText = Text.literal(message));
     }
 
-    /**
-     * We override mouseScrolled to allow vertical scrolling if total rows exceed MAX_VISIBLE_ROWS.
-     */
+    /* ================================================================ */
+    /* =====================   SCROLL HANDLING   ====================== */
+    /* ================================================================ */
 
     public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
-        // If totalRows > MAX_VISIBLE_ROWS, enable scrolling
         int maxRowsVisible = MAX_VISIBLE_ROWS;
         if (totalRows > maxRowsVisible) {
-            // total height needed for all rows
             int totalHeight = totalRows * (BUTTON_HEIGHT + BUTTON_SPACING);
             int maxVisibleHeight = maxRowsVisible * (BUTTON_HEIGHT + BUTTON_SPACING);
             int maxScroll = Math.max(0, totalHeight - maxVisibleHeight);
 
-            // Adjust scroll based on mouse wheel
             scrollOffset -= amount * scrollSpeed;
-            if (scrollOffset < 0) scrollOffset = 0;
-            if (scrollOffset > maxScroll) scrollOffset = maxScroll;
+            scrollOffset = Math.max(0, Math.min(maxScroll, scrollOffset));
 
-            // Re-draw the server buttons with new offset
             updateServerList();
         }
         return super.mouseScrolled(mouseX, mouseY, amount, amount);
     }
 
+    /* ================================================================ */
+    /* ========================   RENDER   ============================ */
+    /* ================================================================ */
+
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        this.renderBackground(context, mouseX, mouseY, delta);
-        super.render(context, mouseX, mouseY, delta);
+    public void render(DrawContext ctx, int mx, int my, float delta) {
+        this.renderBackground(ctx, mx, my, delta);
+        super.render(ctx, mx, my, delta);
 
-        // Draw title
-        context.drawTextWithShadow(
-                this.textRenderer,
-                this.title,
-                this.width / 2 - this.textRenderer.getWidth(this.title) / 2,
-                5,
-                0xFFFFFF
-        );
+        ctx.drawTextWithShadow(this.textRenderer, title,
+                this.width / 2 - this.textRenderer.getWidth(title) / 2, 5, 0xFFFFFF);
 
-        // Draw status text
         if (statusText != null) {
-            context.drawTextWithShadow(
-                    this.textRenderer,
-                    statusText,
-                    this.width / 2 - this.textRenderer.getWidth(statusText) / 2,
-                    80,
-                    0xFFFFFF
-            );
+            ctx.drawTextWithShadow(this.textRenderer, statusText,
+                    this.width / 2 - this.textRenderer.getWidth(statusText) / 2, 80, 0xFFFFFF);
         }
     }
+
+    /* ================================================================ */
+    /* ======================   SHUTDOWN   ============================ */
+    /* ================================================================ */
 
     @Override
     public void removed() {
@@ -437,9 +422,11 @@ public class ServerScannerScreen extends Screen {
 
     @Override
     public void resize(MinecraftClient client, int width, int height) {
-        String text = this.ipTextField != null ? this.ipTextField.getText() : "";
-        this.init(client, width, height);
-        this.ipTextField.setText(text);
-        updateServerList(); // Recalculate button layout after resize
+        String ip  = this.ipTextField   != null ? this.ipTextField.getText()   : "";
+        String sub = this.subnetTextField != null ? this.subnetTextField.getText() : "";
+        init(client, width, height);
+        this.ipTextField.setText(ip);
+        this.subnetTextField.setText(sub);
+        updateServerList();
     }
 }

@@ -281,9 +281,11 @@ public class PortScannerScreen extends Screen {
         calculateLayoutMetrics();
 
         // Determine how many rows we'll need
-        int totalServers = foundServers.size();
-        int totalRows = (int) Math.ceil(totalServers / (double) buttonsPerRow);
 
+        // int totalServers = foundServers.size();
+        // int totalRows = (int) Math.ceil(totalServers / (double) buttonsPerRow);
+        // We don't need rows...
+        
         // Calculate the total width for the block of buttons, to center them horizontally
         int totalBlockWidth = buttonsPerRow * dynamicButtonWidth
                 + (buttonsPerRow - 1) * BUTTON_SPACING;
